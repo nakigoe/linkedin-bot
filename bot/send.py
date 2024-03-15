@@ -14,6 +14,7 @@ from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.support import expected_conditions as EC
 import random
 import os
+import csv 
 os.system("cls") #clear screen from previous sessions
 import time
 import json # for cookies
@@ -40,6 +41,11 @@ driver = webdriver.Edge(options=options)
 action = ActionChains(driver)
 wait = WebDriverWait(driver,s)
 
+# Initialize global variables for csv file
+current_profile_url = ""
+current_message = ""
+csv_file_path = "linkedin_connections_log.csv"
+
 def custom_wait(driver, timeout, condition_type, locator_tuple):
     wait = WebDriverWait(driver, timeout)
     return wait.until(condition_type(locator_tuple))
@@ -54,6 +60,7 @@ for i in range(number_of_messages): #the number of messages in the directory
 username = "nakigoetenshi@gmail.com"
 password = "Super Mega Password"
 login_page = "https://www.linkedin.com/login"
+max_char_length = 300 # the maximum length of the message to be sent, LinkedIn has a limit of 300 characters for the connect message (03.2024)
 
 weekly_limit=200
 weekly_limit -=5 # just for the sake of safety, besides, You want to be able to add some connections by hand!
@@ -202,6 +209,19 @@ def truncate_name(name, max_length):
 
     return " ".join(truncated) + "…"
             
+def log_connection_attempt(name="N/A", has_message=False):
+    global current_profile_url, current_message
+
+    csv_file_path = "" 
+    try:
+        with open(csv_file_path, "a", newline="", encoding="utf-8") as csvfile:
+            writer = csv.writer(csvfile)
+            writer.writerow(
+                [name, current_profile_url, current_message if has_message else "N/A"]
+            )
+    except Exception as e:
+        print("Failed to log connection attempt:", e)
+
 def connect(name):
     try:
         try: # If LinkedIn is asking for an email which no one has, exit immediately! 
@@ -225,7 +245,7 @@ def connect(name):
         message_text = message[random.randint(0,number_of_messages-1)]
         
         # sometimes a person name is too long, rectify it by delimeters, spaces, commas, etc:
-        cleaned_name = truncate_name(name, 200 - len(message_text) - len("Dear ,\n")) # 200 is the current LinkedIn limit for the connect message
+        cleaned_name = truncate_name(name, max_char_length - len(message_text) - len("Dear ,\n")) # 300 is the current LinkedIn limit for the connect message (03.2024)
         
         #store the person's name and attach to the random message to reduce automation detection:
         personalized_message = f"Dear {cleaned_name},\n{message_text}"
@@ -244,6 +264,9 @@ def connect(name):
         except:
             pass
         
+        current_message = (personalized_message) # store the message for the log
+        log_connection_attempt(name, True)  # log the connection attempt to csv file
+        
         return Status.SUCCESS # OK, sent
     except:
         return Status.FAILURE
@@ -252,6 +275,8 @@ def connect_without_name():
     try:
         send_button = wait.until(EC.element_to_be_clickable((By.XPATH, '//button[@aria-label="Send now"]')))
         action.click(send_button).perform()
+        
+        log_connection_attempt()  # log the connection attempt to csv file
         
         # close the irritating popup "You are growing your network", "You are approaching to the weekly limit", etc.
         try:
@@ -275,7 +300,7 @@ def hide_header_and_messenger():
     driver.execute_script("arguments[0].style.display = 'none';", hide_main_messenger)
 
 def find_connect_buttons_and_people_names_and_perform_connect():
-    global weekly_counter
+    global weekly_counter, current_profile_url
     scroll_to_bottom()
     time.sleep(3) #wait for the dynamic page to load
     
@@ -288,6 +313,10 @@ def find_connect_buttons_and_people_names_and_perform_connect():
     for connect_button in connect_buttons:
         person = connect_button.find_element(By.XPATH, './/ancestor::li[@class="reusable-search__result-container"]')
         person_name = person.find_element(By.XPATH, './/span[@dir="ltr"]//span[@aria-hidden="true"]').get_attribute('innerHTML').strip("\n <!---->")
+        
+        profile_link_element = person.find_element(By.XPATH, './/a[contains(@href, "/in/")]')  # the link to the person's profile
+        current_profile_url = profile_link_element.get_attribute("href") # store the profile URL for the log
+        
         click_and_wait(connect_button,0.5)
         
         if (weekly_counter<weekly_limit):
@@ -321,6 +350,17 @@ def main():
             eternal_wait(driver, 15, EC.presence_of_element_located, (By.XPATH, '//div[contains(@class,"global-nav__me")]')) # wait for the page to load
         
         hide_header_and_messenger()
+        
+        # CSV file setup
+        csv_headers = ["Name", "Profile URL", "Custom Message"]
+
+        # Open the file in append mode, so we don't overwrite existing data
+        with open(csv_file_path, "a", newline="", encoding="utf-8") as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=csv_headers)
+            # If file is empty, write the header
+            if csvfile.tell() == 0:
+                writer.writeheader()
+        
         while True:
             try:
                 scroll_to_bottom()
